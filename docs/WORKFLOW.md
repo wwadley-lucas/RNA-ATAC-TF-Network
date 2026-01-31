@@ -27,7 +27,7 @@ This guide walks through the complete workflow for using RNA-ATAC-TF-Network.
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/RNA-ATAC-TF-Network.git
+git clone https://github.com/wwadley-lucas/RNA-ATAC-TF-Network.git
 cd RNA-ATAC-TF-Network
 
 # Run setup script (installs Python and R dependencies)

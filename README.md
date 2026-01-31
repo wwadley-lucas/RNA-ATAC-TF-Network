@@ -37,7 +37,7 @@ The pipeline outputs:
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/RNA-ATAC-TF-Network.git
+git clone https://github.com/wwadley-lucas/RNA-ATAC-TF-Network.git
 cd RNA-ATAC-TF-Network
 ```
 

@@ -7,7 +7,7 @@ Shows primary TF → direct targets, and if targets are TFs themselves,
 expands to show their downstream targets (2 layers deep).
 
 Part of RNA-ATAC-TF-Network pipeline.
-https://github.com/your-username/RNA-ATAC-TF-Network
+https://github.com/wwadley-lucas/RNA-ATAC-TF-Network
 
 Usage:
     python build_tf_focus_network.py --config config.yaml --contrast NvT

@@ -6,7 +6,7 @@ Integrates TOBIAS TF binding, ATAC accessibility, and RNA expression
 to build TF→gene regulatory edges.
 
 Part of RNA-ATAC-TF-Network pipeline.
-https://github.com/your-username/RNA-ATAC-TF-Network
+https://github.com/wwadley-lucas/RNA-ATAC-TF-Network
 
 Usage:
     python build_tf_gene_network.py --config config.yaml --contrast NvT
