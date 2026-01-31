@@ -1,0 +1,165 @@
+# =============================================================================
+# Example Configuration for RNA-ATAC-TF-Network
+# =============================================================================
+# This is a working example configuration that demonstrates the pipeline
+# structure. Copy to config/config.yaml and update paths for your data.
+#
+# This example assumes data is organized as:
+#   data/
+#   ├── TOBIAS/
+#   │   ├── TF_MAT.csv
+#   │   ├── bindetect_results.txt
+#   │   └── BINDetect/
+#   ├── ATAC/
+#   │   ├── peaks_annotated.txt
+#   │   └── atac_counts.txt
+#   └── RNA/
+#       ├── counts.csv
+#       └── metadata.csv
+# =============================================================================
+
+data:
+  # TOBIAS TF footprinting outputs
+  tf_binding_matrix: "../data/TOBIAS/TF_MAT.csv"
+  bindetect_results: "../data/TOBIAS/bindetect_results.txt"
+
+  # ATAC-seq peak annotations and counts
+  atac_peaks_annotated: "../data/ATAC/peaks_annotated.txt"
+  atac_gene_counts: "../data/ATAC/atac_gene_counts.txt"
+  atac_peak_counts: "../data/ATAC/peak_counts.txt"
+
+  # RNA-seq expression data
+  rna_counts: "../data/RNA/counts.csv"
+  metadata: "../data/RNA/metadata.csv"
+
+# Sample name mappings
+sample_mapping:
+  atac_tf_to_group:
+    WT_ctrl: "Wildtype_Control"
+    WT_stim: "Wildtype_Stimulated"
+    KO_ctrl: "Knockout_Control"
+    KO_stim: "Knockout_Stimulated"
+
+# Contrasts to analyze
+contrasts:
+  # Compare stimulated vs control (within wildtype)
+  StimVsCtrl:
+    name: "Stimulated_vs_Control"
+    description: "Effect of stimulation in wildtype cells"
+    atac_groups:
+      case: ["Wildtype_Stimulated"]
+      control: ["Wildtype_Control"]
+    rna_filter:
+      column: "Treatment"
+      case: "Stimulated"
+      control: "Control"
+
+  # Compare knockout vs wildtype (within stimulated)
+  KOvsWT:
+    name: "Knockout_vs_Wildtype"
+    description: "Effect of knockout after stimulation"
+    atac_groups:
+      case: ["Knockout_Stimulated"]
+      control: ["Wildtype_Stimulated"]
+    rna_filter:
+      pre_filter:
+        column: "Treatment"
+        value: "Stimulated"
+      column: "Genotype"
+      case: "Knockout"
+      control: "Wildtype"
+
+# Peak-to-gene mapping settings
+peak2gene:
+  promoter_upstream: 2000
+  promoter_downstream: 500
+  max_distance: 100000
+  decay_distance: 50000
+  use_promoter_only: false
+  include_intron: true
+  include_distal: true
+
+# Scoring thresholds
+scoring:
+  tf_change_min: 0.01
+  tf_pvalue_max: 0.05
+  atac_log2fc_min: 0.5
+  rna_log2fc_min: 0.5
+  rna_padj_max: 0.05
+  edge_score_min: 0.01
+  normalize_edges: true
+
+# Gene set analysis
+msigdb:
+  species: "Mus musculus"
+  collections:
+    - category: "H"
+      subcategory: null
+    - category: "C2"
+      subcategory: "CP:KEGG_LEGACY"
+
+  focus_pathways:
+    - "HALLMARK_INTERFERON_GAMMA_RESPONSE"
+    - "HALLMARK_INFLAMMATORY_RESPONSE"
+    - "HALLMARK_IL6_JAK_STAT3_SIGNALING"
+    - "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
+    - "KEGG_JAK_STAT_SIGNALING_PATHWAY"
+
+# Network visualization settings
+network:
+  min_tf_activity: 0.005
+  min_gene_edges: 1
+  max_genes_per_pathway: 50
+  max_tfs_per_pathway: 15
+  top_edges_per_tf: 20
+
+# Output settings
+output:
+  base_dir: "./output"
+  tables_dir: "tables"
+  plots_dir: "plots"
+  cytoscape_dir: "cytoscape"
+  plot_width: 12
+  plot_height: 10
+  plot_dpi: 300
+  save_pdf: true
+  save_png: true
+  save_cytoscape: true
+
+# TF-focused cascade analysis
+tf_focus:
+  enabled: true
+  bindetect_bed_dir: "../data/TOBIAS/BINDetect"
+
+  tfs:
+    - name: "STAT1"
+      motif_id: "MA0137.3"
+    - name: "IRF1"
+      motif_id: "MA0050.2"
+
+  contrast:
+    name: "Stimulated_vs_Control"
+    case_conditions: ["Wildtype_Stimulated"]
+    control_conditions: ["Wildtype_Control"]
+    invert_expression: false
+
+  pathway_filter:
+    enabled: true
+    pathway: "HALLMARK_INTERFERON_GAMMA_RESPONSE"
+
+  accessibility_mode: "differential"
+  use_bound_sites_only: true
+  min_binding_score: 5.0
+  only_de_genes: true
+  de_log2fc_threshold: 0.5
+  de_pvalue_threshold: 0.05
+  max_target_genes: 15
+
+  cascade:
+    enabled: true
+    max_depth: 2
+    max_secondary_tfs: 5
+    max_targets_per_secondary: 15
+
+  title_prefix: "TF Regulatory Network"
+  contrast_label: "Stimulated vs Control"

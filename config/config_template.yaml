@@ -1,0 +1,192 @@
+# =============================================================================
+# RNA-ATAC-TF-Network Configuration Template
+# =============================================================================
+# This is a template configuration file. Copy to config.yaml and update paths
+# for your own data.
+#
+# For detailed input file format specifications, see: docs/INPUT_DATA_FORMAT.md
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Input Data Paths
+# -----------------------------------------------------------------------------
+# Update these paths to point to your data files
+data:
+  # TOBIAS outputs
+  tf_binding_matrix: "/path/to/your/TF_MAT.csv"           # TF binding count matrix
+  bindetect_results: "/path/to/your/bindetect_results.txt" # BINDetect differential binding
+
+  # ATAC-seq data
+  atac_peaks_annotated: "/path/to/your/peaks_annotated.txt" # ChIPseeker/HOMER peak annotations
+  atac_gene_counts: "/path/to/your/atac_gene_counts.txt"    # Gene-level ATAC counts
+  atac_peak_counts: "/path/to/your/peak_counts.txt"         # Peak-level ATAC counts
+
+  # RNA-seq data
+  rna_counts: "/path/to/your/rna_counts.csv"   # RNA expression count matrix
+  metadata: "/path/to/your/metadata.csv"       # Sample metadata with conditions
+
+# -----------------------------------------------------------------------------
+# Sample Mapping
+# -----------------------------------------------------------------------------
+# Map ATAC column names to condition group names
+sample_mapping:
+  atac_tf_to_group:
+    Sample1_ctrl: "Condition1_ctrl"
+    Sample1_treat: "Condition1_treat"
+    Sample2_ctrl: "Condition2_ctrl"
+    Sample2_treat: "Condition2_treat"
+    # Add more mappings as needed
+
+# -----------------------------------------------------------------------------
+# Contrasts to Analyze
+# -----------------------------------------------------------------------------
+# Define the comparisons you want to make
+contrasts:
+  # Example contrast: Treatment vs Control
+  TvC:
+    name: "Treatment_vs_Control"
+    description: "Compare treated cells to control cells"
+    atac_groups:
+      case: ["Condition1_treat", "Condition2_treat"]
+      control: ["Condition1_ctrl", "Condition2_ctrl"]
+    rna_filter:
+      column: "Condition"      # Column in metadata
+      case: "Treated"          # Value for case samples
+      control: "Control"       # Value for control samples
+
+  # Add more contrasts as needed
+  # Another_Contrast:
+  #   name: "..."
+  #   ...
+
+# -----------------------------------------------------------------------------
+# Peak-to-Gene Mapping Parameters
+# -----------------------------------------------------------------------------
+peak2gene:
+  promoter_upstream: 2000      # bp upstream of TSS
+  promoter_downstream: 500     # bp downstream of TSS
+  max_distance: 100000         # max distance to consider (bp)
+  decay_distance: 50000        # exponential decay parameter (bp)
+  use_promoter_only: false     # if true, only use peaks annotated as Promoter
+  include_intron: true         # include intronic peaks
+  include_distal: true         # include distal intergenic (with distance weighting)
+
+# -----------------------------------------------------------------------------
+# Edge Scoring Parameters
+# -----------------------------------------------------------------------------
+scoring:
+  # TF binding score threshold (from bindetect)
+  tf_change_min: 0.01          # minimum |change| score to consider
+  tf_pvalue_max: 0.05          # maximum p-value for TF binding change
+
+  # ATAC accessibility
+  atac_log2fc_min: 0.5         # minimum |log2FC| for accessibility
+
+  # RNA expression
+  rna_log2fc_min: 0.5          # minimum |log2FC| for expression
+  rna_padj_max: 0.05           # maximum adjusted p-value
+
+  # Edge score thresholds
+  edge_score_min: 0.01         # minimum edge score to keep
+  normalize_edges: true        # normalize edge scores to 0-1
+
+# -----------------------------------------------------------------------------
+# MSigDB Gene Sets
+# -----------------------------------------------------------------------------
+msigdb:
+  species: "Mus musculus"      # "Homo sapiens" or "Mus musculus"
+  collections:
+    - category: "H"            # Hallmark gene sets
+      subcategory: null
+    - category: "C2"           # Curated gene sets
+      subcategory: "CP:KEGG_LEGACY"
+    - category: "C2"
+      subcategory: "CP:REACTOME"
+
+  # Specific pathways of interest (will be prioritized in output)
+  focus_pathways:
+    - "HALLMARK_INTERFERON_ALPHA_RESPONSE"
+    - "HALLMARK_INTERFERON_GAMMA_RESPONSE"
+    - "HALLMARK_IL6_JAK_STAT3_SIGNALING"
+    - "HALLMARK_INFLAMMATORY_RESPONSE"
+    - "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
+    # Add your pathways of interest
+
+# -----------------------------------------------------------------------------
+# Network Filtering for Visualization
+# -----------------------------------------------------------------------------
+network:
+  min_tf_activity: 0.005       # minimum TF activity score to show
+  min_gene_edges: 1            # minimum edges for a gene to be shown
+  max_genes_per_pathway: 50    # cap genes per pathway plot
+  max_tfs_per_pathway: 15      # cap TFs per pathway plot
+  top_edges_per_tf: 20         # keep top N edges per TF
+
+# -----------------------------------------------------------------------------
+# Output Settings
+# -----------------------------------------------------------------------------
+output:
+  base_dir: "./output"
+  tables_dir: "tables"
+  plots_dir: "plots"
+  cytoscape_dir: "cytoscape"
+
+  # Plot settings
+  plot_width: 12
+  plot_height: 10
+  plot_dpi: 300
+
+  # File formats
+  save_pdf: true
+  save_png: true
+  save_cytoscape: true         # Generate Cytoscape-compatible files
+
+# -----------------------------------------------------------------------------
+# TF-Focused Network Settings (Optional)
+# -----------------------------------------------------------------------------
+# Generates TF-centric cascade visualizations showing a primary TF and its
+# regulatory targets, expanding secondary TFs into their downstream targets.
+tf_focus:
+  enabled: false               # Set to true to generate TF-focused plots
+
+  # Path to TOBIAS BINDetect output folder containing TF subdirectories
+  bindetect_bed_dir: "/path/to/your/BINDetect/"
+
+  # TF(s) to focus on - list one or more
+  tfs:
+    - name: "YOUR_TF"
+      motif_id: "MAXXXX.X"     # JASPAR motif ID
+    # - name: "ANOTHER_TF"
+    #   motif_id: "MAXXXX.X"
+
+  # Contrast for visualization
+  contrast:
+    name: "Case_vs_Control"
+    case_conditions: ["Condition1_treat", "Condition2_treat"]
+    control_conditions: ["Condition1_ctrl", "Condition2_ctrl"]
+    invert_expression: false   # Flip RNA log2FC sign if needed
+
+  # Pathway filtering (optional - filter targets to pathway genes)
+  pathway_filter:
+    enabled: false
+    pathway: "HALLMARK_YOUR_PATHWAY"
+
+  # Filtering options
+  accessibility_mode: "differential"  # "differential" or "absolute"
+  use_bound_sites_only: true
+  min_binding_score: 5.0
+  only_de_genes: true
+  de_log2fc_threshold: 0.5
+  de_pvalue_threshold: 0.05
+  max_target_genes: 15
+
+  # Cascade settings (show secondary TF targets)
+  cascade:
+    enabled: true
+    max_depth: 2
+    max_secondary_tfs: 5
+    max_targets_per_secondary: 15
+
+  # Labels
+  title_prefix: "TF Regulatory Network"
+  contrast_label: "Case vs Control"

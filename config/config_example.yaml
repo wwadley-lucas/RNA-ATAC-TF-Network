@@ -1,0 +1,197 @@
+# =============================================================================
+# RNA-ATAC-TF-Network Configuration Example
+# =============================================================================
+# This is a filled example based on a JAK-STAT signaling study comparing
+# normal vs transformed cells and canonical vs non-canonical pathways.
+#
+# Copy this file to config.yaml in the parent directory and modify as needed.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Input Data Paths
+# -----------------------------------------------------------------------------
+data:
+  # TOBIAS outputs
+  tf_binding_matrix: "../data/TOBIAS/TF_MAT.csv"
+  bindetect_results: "../data/TOBIAS/bindetect_results.txt"
+
+  # ATAC-seq data (annotated with ChIPseeker)
+  atac_peaks_annotated: "../data/ATAC/merged_peaks_annotated.txt"
+  atac_gene_counts: "../data/ATAC/atac_gene_counts.txt"
+  atac_peak_counts: "../data/ATAC/merged_readCount_matrix.txt"
+
+  # RNA-seq data
+  rna_counts: "../data/RNA/count_matrix.csv"
+  metadata: "../data/RNA/metadata.csv"
+
+# -----------------------------------------------------------------------------
+# Sample Mapping
+# -----------------------------------------------------------------------------
+sample_mapping:
+  atac_tf_to_group:
+    # Parental cell line
+    PO: "Parental_ctrl"
+    PIL: "Parental_IL10"
+    # IL10R (normal)
+    X6O: "IL10R_ctrl"
+    X6IL: "IL10R_IL10"
+    # IL10R-JAK2V617F (transformed, canonical)
+    X8CIO: "IL10R_JAK2V617F_ctrl"
+    X8CIIL: "IL10R_JAK2V617F_IL10"
+    # MPL-JAK2V617F (transformed, non-canonical)
+    X13CIO: "MPL_JAK2V617F_ctrl"
+    X13CIIL: "MPL_JAK2V617F_IL10"
+
+# -----------------------------------------------------------------------------
+# Contrasts to Analyze
+# -----------------------------------------------------------------------------
+contrasts:
+  # Normal vs Transformed comparison
+  NvT:
+    name: "Normal_vs_Transformed"
+    description: "Compare normal cells to cytokine-independent transformed cells"
+    atac_groups:
+      normal: ["IL10R_ctrl", "IL10R_IL10"]
+      transformed: ["IL10R_JAK2V617F_ctrl", "IL10R_JAK2V617F_IL10",
+                    "MPL_JAK2V617F_ctrl", "MPL_JAK2V617F_IL10"]
+    rna_filter:
+      column: "Condition"
+      case: "Transformed"
+      control: "Normal"
+
+  # Canonical vs Non-canonical (within Transformed only)
+  CvNC:
+    name: "Canonical_vs_NonCanonical"
+    description: "Within transformed: IL10R-JAK2V617F (canonical) vs MPL-JAK2V617F (non-canonical)"
+    atac_groups:
+      canonical: ["IL10R_JAK2V617F_ctrl", "IL10R_JAK2V617F_IL10"]
+      noncanonical: ["MPL_JAK2V617F_ctrl", "MPL_JAK2V617F_IL10"]
+    rna_filter:
+      pre_filter:
+        column: "Condition"
+        value: "Transformed"
+      column: "CellType"
+      case: "MPL_JAK2V617F"
+      control: "IL10R_JAK2V617F"
+
+# -----------------------------------------------------------------------------
+# Peak-to-Gene Mapping Parameters
+# -----------------------------------------------------------------------------
+peak2gene:
+  promoter_upstream: 2000
+  promoter_downstream: 500
+  max_distance: 100000
+  decay_distance: 50000
+  use_promoter_only: false
+  include_intron: true
+  include_distal: true
+
+# -----------------------------------------------------------------------------
+# Edge Scoring Parameters
+# -----------------------------------------------------------------------------
+scoring:
+  tf_change_min: 0.01
+  tf_pvalue_max: 0.05
+  atac_log2fc_min: 0.5
+  rna_log2fc_min: 0.5
+  rna_padj_max: 0.05
+  edge_score_min: 0.01
+  normalize_edges: true
+
+# -----------------------------------------------------------------------------
+# MSigDB Gene Sets
+# -----------------------------------------------------------------------------
+msigdb:
+  species: "Mus musculus"
+  collections:
+    - category: "H"
+      subcategory: null
+    - category: "C2"
+      subcategory: "CP:KEGG_LEGACY"
+    - category: "C2"
+      subcategory: "CP:REACTOME"
+
+  focus_pathways:
+    - "HALLMARK_INTERFERON_ALPHA_RESPONSE"
+    - "HALLMARK_INTERFERON_GAMMA_RESPONSE"
+    - "HALLMARK_IL6_JAK_STAT3_SIGNALING"
+    - "HALLMARK_INFLAMMATORY_RESPONSE"
+    - "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
+    - "HALLMARK_IL2_STAT5_SIGNALING"
+    - "KEGG_JAK_STAT_SIGNALING_PATHWAY"
+    - "REACTOME_INTERFERON_SIGNALING"
+    - "REACTOME_CYTOKINE_SIGNALING_IN_IMMUNE_SYSTEM"
+
+# -----------------------------------------------------------------------------
+# Network Filtering
+# -----------------------------------------------------------------------------
+network:
+  min_tf_activity: 0.005
+  min_gene_edges: 1
+  max_genes_per_pathway: 50
+  max_tfs_per_pathway: 15
+  top_edges_per_tf: 20
+
+# -----------------------------------------------------------------------------
+# Output Settings
+# -----------------------------------------------------------------------------
+output:
+  base_dir: "./output"
+  tables_dir: "tables"
+  plots_dir: "plots"
+  cytoscape_dir: "cytoscape"
+  plot_width: 12
+  plot_height: 10
+  plot_dpi: 300
+  save_pdf: true
+  save_png: true
+  save_cytoscape: true
+
+# -----------------------------------------------------------------------------
+# TF-Focused Network Settings
+# -----------------------------------------------------------------------------
+tf_focus:
+  enabled: true
+  bindetect_bed_dir: "../data/TOBIAS/BINDetect"
+
+  # Focus on CEBP family TFs
+  tfs:
+    - name: "CEBPA"
+      motif_id: "MA0102.5"
+    - name: "CEBPB"
+      motif_id: "MA0466.4"
+    - name: "CEBPD"
+      motif_id: "MA0836.3"
+    - name: "CEBPE"
+      motif_id: "MA0837.3"
+    - name: "CEBPG"
+      motif_id: "MA0838.1"
+
+  # Contrast settings
+  contrast:
+    name: "NonCanonical_vs_Canonical"
+    case_conditions: ["MPL_JAK2V617F_IL10", "MPL_JAK2V617F_ctrl"]
+    control_conditions: ["IL10R_JAK2V617F_IL10", "IL10R_JAK2V617F_ctrl"]
+    invert_expression: true
+
+  # Filter to inflammatory response pathway
+  pathway_filter:
+    enabled: true
+    pathway: "HALLMARK_INFLAMMATORY_RESPONSE"
+
+  accessibility_mode: "differential"
+  use_bound_sites_only: true
+  min_binding_score: 5.0
+  only_de_genes: true
+  de_log2fc_threshold: 0.5
+  de_pvalue_threshold: 0.05
+  max_target_genes: 15
+
+  cascade:
+    enabled: true
+    max_depth: 2
+    max_secondary_tfs: 5
+    max_targets_per_secondary: 15
+
+  title_prefix: "TF Regulatory Network"
+  contrast_label: "Non-canonical vs Canonical"
