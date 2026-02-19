@@ -170,7 +170,7 @@ See [docs/OUTPUT_FILES.md](docs/OUTPUT_FILES.md) for detailed descriptions.
 If you use this tool in your research, please cite:
 
 ```
-[Your citation here]
+Wadley L. (2026) RATs gene regulatory networking. GitHub.
 ```
 
 Also consider citing the underlying tools:
