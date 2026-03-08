@@ -477,95 +477,35 @@ def get_tf_expression(
     return 0.0, 1.0
 
 
-def build_cascade_network(
+def _load_primary_targets(
     primary_tf: str,
     primary_motif: str,
     tf_list: Dict[str, str],
     peak2gene: pd.DataFrame,
     rna_de: pd.DataFrame,
     bindetect_dir: Path,
-    config: dict
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    *,
+    case_conditions: List[str],
+    control_conditions: List[str],
+    accessibility_mode: str,
+    use_bound_only: bool,
+    min_binding_score: float,
+    only_de: bool,
+    de_lfc: float,
+    de_pval: float,
+    max_targets: int,
+    pathway_genes: Set[str],
+    cascade_enabled: bool,
+    max_secondary_tfs: int,
+) -> Tuple[pd.DataFrame, List[dict]]:
     """
-    Build cascading regulatory network from primary TF.
-
-    Steps:
-    1. Get primary TF's DE targets
-    2. Identify which targets are TFs (using tf_list lookup)
-    3. For each secondary TF, get their DE targets
-    4. Build combined edge table with layer info
-
-    Args:
-        primary_tf: Name of primary TF (e.g., "STAT1")
-        primary_motif: Motif ID (e.g., "MA0137.4")
-        tf_list: Dict mapping TF names to motif IDs
-        peak2gene: Peak-to-gene mapping DataFrame
-        rna_de: RNA DE results DataFrame
-        bindetect_dir: Path to BINDetect directory
-        config: tf_focus config section
+    Load BED files for a primary TF, compute binding/accessibility scores,
+    filter to DE and pathway genes, rank, and split into TF vs non-TF targets.
 
     Returns:
-        Tuple of (edges_df, nodes_df)
+        Tuple of (primary_targets DataFrame, secondary_tfs list of dicts)
+        Returns (empty DataFrame, []) on failure.
     """
-    print(f"\n  Building cascade network for {primary_tf}...")
-
-    # Config settings
-    tf_cfg = config
-    cascade_cfg = tf_cfg.get('cascade', {})
-    contrast_cfg = tf_cfg.get('contrast', {})
-
-    case_conditions = contrast_cfg.get('case_conditions', [])
-    control_conditions = contrast_cfg.get('control_conditions', [])
-    accessibility_mode = tf_cfg.get('accessibility_mode', 'differential')
-    use_bound_only = tf_cfg.get('use_bound_sites_only', True)
-    min_binding_score = tf_cfg.get('min_binding_score', 5.0)
-    only_de = tf_cfg.get('only_de_genes', True)
-    de_lfc = tf_cfg.get('de_log2fc_threshold', 0.5)
-    de_pval = tf_cfg.get('de_pvalue_threshold', 0.05)
-    max_targets = tf_cfg.get('max_target_genes', 50)
-
-    cascade_enabled = cascade_cfg.get('enabled', True)
-    max_secondary_tfs = cascade_cfg.get('max_secondary_tfs', 5)
-    max_targets_per_secondary = cascade_cfg.get('max_targets_per_secondary', 20)
-    invert_expression = contrast_cfg.get('invert_expression', False)
-
-    # Pathway filtering settings
-    pathway_cfg = tf_cfg.get('pathway_filter', {})
-    pathway_enabled = pathway_cfg.get('enabled', False)
-    pathway_name = pathway_cfg.get('pathway', None)
-    pathway_genes: Set[str] = set()
-
-    if pathway_enabled and pathway_name:
-        print(f"  Loading pathway genes: {pathway_name}")
-        species = tf_cfg.get('species', 'Mus musculus')
-        cache_dir = bindetect_dir.parent / "pathway_cache"
-        pathway_genes = load_pathway_genes(pathway_name, species, cache_dir)
-
-    all_edges = []
-    all_nodes = {}
-
-    # Invert RNA expression if configured (to match contrast direction)
-    if invert_expression:
-        print("  Inverting RNA expression values to match contrast direction")
-        rna_de = rna_de.copy()
-        rna_de['rna_log2fc'] = -rna_de['rna_log2fc']
-
-    # ========== Layer 0: Primary TF ==========
-    print(f"  Layer 0: Primary TF {primary_tf}")
-
-    # Get primary TF expression
-    primary_lfc, primary_pval = get_tf_expression(primary_tf, rna_de)
-
-    all_nodes[primary_tf] = {
-        'node': primary_tf,
-        'node_type': 'TF',
-        'layer': 0,
-        'expression': primary_lfc,
-        'expression_pval': primary_pval,
-        'is_primary': True
-    }
-
-    # ========== Layer 1: Primary TF targets ==========
     print(f"  Layer 1: Loading {primary_tf} targets...")
 
     # Load primary TF binding sites
@@ -578,14 +518,14 @@ def build_cascade_network(
 
     if len(primary_sites) == 0:
         print(f"    ERROR: No binding sites found for {primary_tf}")
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), []
 
     # Map to genes
     primary_gene_scores = map_sites_to_genes(primary_sites, peak2gene)
 
     if len(primary_gene_scores) == 0:
         print(f"    ERROR: No genes mapped for {primary_tf}")
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), []
 
     # Compute accessibility scores
     primary_gene_scores = compute_contrast_scores(
@@ -602,7 +542,7 @@ def build_cascade_network(
         primary_targets['rna_log2fc'] = primary_targets['rna_log2fc'].fillna(0)
 
     # Filter to pathway genes if enabled
-    if pathway_enabled and pathway_genes:
+    if pathway_genes:
         pre_filter_count = len(primary_targets)
         # Keep genes that are in the pathway (case-insensitive match)
         pathway_genes_upper = {g.upper() for g in pathway_genes}
@@ -641,7 +581,7 @@ def build_cascade_network(
     non_tf_targets = primary_targets[~primary_targets['is_tf']].copy()
 
     # Take top TFs (by combined score) and top non-TFs
-    max_secondary = cascade_cfg.get('max_secondary_tfs', 5) if cascade_enabled else 0
+    max_secondary = max_secondary_tfs if cascade_enabled else 0
     n_tf_slots = min(max_secondary, len(tf_targets))
     n_gene_slots = max_targets - n_tf_slots
 
@@ -653,7 +593,25 @@ def build_cascade_network(
     primary_targets = primary_targets.sort_values('combined_score', ascending=False)
 
     # Identify secondary TFs for cascade
-    secondary_tfs = []
+    secondary_tfs = _identify_secondary_tfs(top_tfs, tf_list)
+
+    print(f"    Found {len(secondary_tfs)} secondary TFs among {len(primary_targets)} targets")
+
+    return primary_targets, secondary_tfs
+
+
+def _identify_secondary_tfs(
+    top_tfs: pd.DataFrame,
+    tf_list: Dict[str, str],
+) -> List[dict]:
+    """
+    From the top-ranked TF targets, build the list of secondary TFs
+    with their motif IDs for cascade expansion.
+
+    Returns:
+        List of dicts with 'name' and 'motif_id' keys.
+    """
+    secondary_tfs: List[dict] = []
     for _, row in top_tfs.iterrows():
         gene = row['gene']
         gene_upper = gene.upper()
@@ -662,132 +620,137 @@ def build_cascade_network(
                 'name': gene,
                 'motif_id': tf_list[gene_upper]
             })
+    return secondary_tfs
 
-    print(f"    Found {len(secondary_tfs)} secondary TFs among {len(primary_targets)} targets")
 
-    # Create Layer 1 edges and nodes
-    for _, row in primary_targets.iterrows():
-        gene = row['gene']
-        gene_upper = gene.upper()
+def _expand_cascade_layer(
+    secondary_tfs: List[dict],
+    primary_tf: str,
+    tf_list: Dict[str, str],
+    peak2gene: pd.DataFrame,
+    rna_de: pd.DataFrame,
+    bindetect_dir: Path,
+    all_edges: List[dict],
+    all_nodes: Dict[str, dict],
+    *,
+    case_conditions: List[str],
+    control_conditions: List[str],
+    accessibility_mode: str,
+    use_bound_only: bool,
+    min_binding_score: float,
+    only_de: bool,
+    de_lfc: float,
+    de_pval: float,
+    max_secondary_tfs: int,
+    max_targets_per_secondary: int,
+    pathway_genes: Set[str],
+) -> None:
+    """
+    Expand layer 2 of the cascade: for each secondary TF, load its
+    targets, filter, score, and append edges/nodes to the accumulator
+    lists/dicts (mutated in place).
+    """
+    print(f"\n  Layer 2: Expanding secondary TFs...")
 
-        # Determine if this gene is a TF
-        is_tf = gene_upper in tf_list and gene_upper != primary_tf.upper()
+    # Limit number of secondary TFs to expand
+    secondary_tfs = secondary_tfs[:max_secondary_tfs]
 
-        # Edge
-        all_edges.append({
-            'source': primary_tf,
-            'target': gene,
-            'binding_score': row['binding_score'],
-            'accessibility_diff': row['accessibility_score'],
-            'n_sites': row.get('n_sites', 1),
-            'layer': 1,
-            'source_type': 'TF',
-            'target_type': 'TF' if is_tf else 'gene'
-        })
+    for sec_tf in secondary_tfs:
+        sec_name = sec_tf['name']
+        sec_motif = sec_tf['motif_id']
 
-        # Node
-        if gene not in all_nodes:
-            all_nodes[gene] = {
-                'node': gene,
-                'node_type': 'TF' if is_tf else 'gene',
-                'layer': 1,
-                'expression': row['rna_log2fc'],
-                'expression_pval': row.get('rna_pvalue', 1.0),
-                'is_primary': False
-            }
+        print(f"    Expanding {sec_name}...")
 
-    # ========== Layer 2: Secondary TF targets ==========
-    if cascade_enabled and secondary_tfs:
-        print(f"\n  Layer 2: Expanding secondary TFs...")
+        # Load secondary TF binding sites
+        sec_sites = load_tf_bed_file(
+            sec_name, sec_motif, bindetect_dir,
+            use_bound_only=use_bound_only,
+            case_conditions=case_conditions,
+            min_binding_score=min_binding_score
+        )
 
-        # Limit number of secondary TFs to expand
-        secondary_tfs = secondary_tfs[:max_secondary_tfs]
+        if len(sec_sites) == 0:
+            continue
 
-        for sec_tf in secondary_tfs:
-            sec_name = sec_tf['name']
-            sec_motif = sec_tf['motif_id']
+        # Map to genes
+        sec_gene_scores = map_sites_to_genes(sec_sites, peak2gene)
 
-            print(f"    Expanding {sec_name}...")
+        if len(sec_gene_scores) == 0:
+            continue
 
-            # Load secondary TF binding sites
-            sec_sites = load_tf_bed_file(
-                sec_name, sec_motif, bindetect_dir,
-                use_bound_only=use_bound_only,
-                case_conditions=case_conditions,
-                min_binding_score=min_binding_score
+        # Compute accessibility scores
+        sec_gene_scores = compute_contrast_scores(
+            sec_gene_scores, case_conditions, control_conditions, accessibility_mode
+        )
+
+        # Filter to DE genes
+        if only_de:
+            sec_targets = filter_to_de_genes(sec_gene_scores, rna_de, de_lfc, de_pval)
+        else:
+            sec_targets = sec_gene_scores.merge(
+                rna_de[['gene', 'rna_log2fc', 'rna_pvalue']], on='gene', how='left'
             )
+            sec_targets['rna_log2fc'] = sec_targets['rna_log2fc'].fillna(0)
 
-            if len(sec_sites) == 0:
+        # Filter to pathway genes if enabled
+        if pathway_genes:
+            pathway_genes_upper = {g.upper() for g in pathway_genes}
+            sec_targets = sec_targets[
+                sec_targets['gene'].str.upper().isin(pathway_genes_upper)
+            ].copy()
+
+        # Limit targets per secondary TF
+        if len(sec_targets) > max_targets_per_secondary:
+            sec_targets['combined_score'] = (
+                sec_targets['binding_score'] *
+                (1 + sec_targets['accessibility_score'].abs()) *
+                (1 + sec_targets['rna_log2fc'].abs())
+            )
+            sec_targets = sec_targets.nlargest(max_targets_per_secondary, 'combined_score')
+
+        # Create Layer 2 edges and nodes
+        for _, row in sec_targets.iterrows():
+            target_gene = row['gene']
+
+            # Skip if target is the primary TF or already a layer 1 node
+            if target_gene.upper() == primary_tf.upper():
                 continue
 
-            # Map to genes
-            sec_gene_scores = map_sites_to_genes(sec_sites, peak2gene)
+            # Edge
+            all_edges.append({
+                'source': sec_name,
+                'target': target_gene,
+                'binding_score': row['binding_score'],
+                'accessibility_diff': row['accessibility_score'],
+                'n_sites': row.get('n_sites', 1),
+                'layer': 2,
+                'source_type': 'TF',
+                'target_type': 'gene'
+            })
 
-            if len(sec_gene_scores) == 0:
-                continue
-
-            # Compute accessibility scores
-            sec_gene_scores = compute_contrast_scores(
-                sec_gene_scores, case_conditions, control_conditions, accessibility_mode
-            )
-
-            # Filter to DE genes
-            if only_de:
-                sec_targets = filter_to_de_genes(sec_gene_scores, rna_de, de_lfc, de_pval)
-            else:
-                sec_targets = sec_gene_scores.merge(
-                    rna_de[['gene', 'rna_log2fc', 'rna_pvalue']], on='gene', how='left'
-                )
-                sec_targets['rna_log2fc'] = sec_targets['rna_log2fc'].fillna(0)
-
-            # Filter to pathway genes if enabled
-            if pathway_enabled and pathway_genes:
-                pathway_genes_upper = {g.upper() for g in pathway_genes}
-                sec_targets = sec_targets[
-                    sec_targets['gene'].str.upper().isin(pathway_genes_upper)
-                ].copy()
-
-            # Limit targets per secondary TF
-            if len(sec_targets) > max_targets_per_secondary:
-                sec_targets['combined_score'] = (
-                    sec_targets['binding_score'] *
-                    (1 + sec_targets['accessibility_score'].abs()) *
-                    (1 + sec_targets['rna_log2fc'].abs())
-                )
-                sec_targets = sec_targets.nlargest(max_targets_per_secondary, 'combined_score')
-
-            # Create Layer 2 edges and nodes
-            for _, row in sec_targets.iterrows():
-                target_gene = row['gene']
-
-                # Skip if target is the primary TF or already a layer 1 node
-                if target_gene.upper() == primary_tf.upper():
-                    continue
-
-                # Edge
-                all_edges.append({
-                    'source': sec_name,
-                    'target': target_gene,
-                    'binding_score': row['binding_score'],
-                    'accessibility_diff': row['accessibility_score'],
-                    'n_sites': row.get('n_sites', 1),
+            # Node (only add if not already present)
+            if target_gene not in all_nodes:
+                all_nodes[target_gene] = {
+                    'node': target_gene,
+                    'node_type': 'gene',
                     'layer': 2,
-                    'source_type': 'TF',
-                    'target_type': 'gene'
-                })
+                    'expression': row['rna_log2fc'],
+                    'expression_pval': row.get('rna_pvalue', 1.0),
+                    'is_primary': False
+                }
 
-                # Node (only add if not already present)
-                if target_gene not in all_nodes:
-                    all_nodes[target_gene] = {
-                        'node': target_gene,
-                        'node_type': 'gene',
-                        'layer': 2,
-                        'expression': row['rna_log2fc'],
-                        'expression_pval': row.get('rna_pvalue', 1.0),
-                        'is_primary': False
-                    }
 
-    # Convert to DataFrames
+def _assemble_cascade_network(
+    all_edges: List[dict],
+    all_nodes: Dict[str, dict],
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Convert accumulated edge/node collections into final DataFrames,
+    add scaled visualization scores and degree statistics.
+
+    Returns:
+        Tuple of (edges_df, nodes_df)
+    """
     edges_df = pd.DataFrame(all_edges) if all_edges else pd.DataFrame()
     nodes_df = pd.DataFrame(list(all_nodes.values())) if all_nodes else pd.DataFrame()
 
@@ -831,6 +794,166 @@ def build_cascade_network(
         print(f"    Genes: {len(nodes_df[nodes_df['node_type'] == 'gene'])}")
 
     return edges_df, nodes_df
+
+
+def build_cascade_network(
+    primary_tf: str,
+    primary_motif: str,
+    tf_list: Dict[str, str],
+    peak2gene: pd.DataFrame,
+    rna_de: pd.DataFrame,
+    bindetect_dir: Path,
+    config: dict
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Build cascading regulatory network from primary TF.
+
+    Steps:
+    1. Get primary TF's DE targets
+    2. Identify which targets are TFs (using tf_list lookup)
+    3. For each secondary TF, get their DE targets
+    4. Build combined edge table with layer info
+
+    Args:
+        primary_tf: Name of primary TF (e.g., "STAT1")
+        primary_motif: Motif ID (e.g., "MA0137.4")
+        tf_list: Dict mapping TF names to motif IDs
+        peak2gene: Peak-to-gene mapping DataFrame
+        rna_de: RNA DE results DataFrame
+        bindetect_dir: Path to BINDetect directory
+        config: tf_focus config section
+
+    Returns:
+        Tuple of (edges_df, nodes_df)
+    """
+    print(f"\n  Building cascade network for {primary_tf}...")
+
+    # --- Parse config ---
+    tf_cfg = config
+    cascade_cfg = tf_cfg.get('cascade', {})
+    contrast_cfg = tf_cfg.get('contrast', {})
+
+    case_conditions = contrast_cfg.get('case_conditions', [])
+    control_conditions = contrast_cfg.get('control_conditions', [])
+    accessibility_mode = tf_cfg.get('accessibility_mode', 'differential')
+    use_bound_only = tf_cfg.get('use_bound_sites_only', True)
+    min_binding_score = tf_cfg.get('min_binding_score', 5.0)
+    only_de = tf_cfg.get('only_de_genes', True)
+    de_lfc = tf_cfg.get('de_log2fc_threshold', 0.5)
+    de_pval = tf_cfg.get('de_pvalue_threshold', 0.05)
+    max_targets = tf_cfg.get('max_target_genes', 50)
+
+    cascade_enabled = cascade_cfg.get('enabled', True)
+    max_secondary_tfs = cascade_cfg.get('max_secondary_tfs', 5)
+    max_targets_per_secondary = cascade_cfg.get('max_targets_per_secondary', 20)
+    invert_expression = contrast_cfg.get('invert_expression', False)
+
+    # Pathway filtering settings
+    pathway_cfg = tf_cfg.get('pathway_filter', {})
+    pathway_enabled = pathway_cfg.get('enabled', False)
+    pathway_name = pathway_cfg.get('pathway', None)
+    pathway_genes: Set[str] = set()
+
+    if pathway_enabled and pathway_name:
+        print(f"  Loading pathway genes: {pathway_name}")
+        species = tf_cfg.get('species', 'Mus musculus')
+        cache_dir = bindetect_dir.parent / "pathway_cache"
+        pathway_genes = load_pathway_genes(pathway_name, species, cache_dir)
+
+    # --- Prepare state accumulators ---
+    all_edges: List[dict] = []
+    all_nodes: Dict[str, dict] = {}
+
+    # Invert RNA expression if configured (to match contrast direction)
+    if invert_expression:
+        print("  Inverting RNA expression values to match contrast direction")
+        rna_de = rna_de.copy()
+        rna_de['rna_log2fc'] = -rna_de['rna_log2fc']
+
+    # --- Layer 0: Primary TF node ---
+    print(f"  Layer 0: Primary TF {primary_tf}")
+    primary_lfc, primary_pval = get_tf_expression(primary_tf, rna_de)
+
+    all_nodes[primary_tf] = {
+        'node': primary_tf,
+        'node_type': 'TF',
+        'layer': 0,
+        'expression': primary_lfc,
+        'expression_pval': primary_pval,
+        'is_primary': True
+    }
+
+    # --- Layer 1: Primary TF targets ---
+    primary_targets, secondary_tfs = _load_primary_targets(
+        primary_tf, primary_motif, tf_list, peak2gene, rna_de, bindetect_dir,
+        case_conditions=case_conditions,
+        control_conditions=control_conditions,
+        accessibility_mode=accessibility_mode,
+        use_bound_only=use_bound_only,
+        min_binding_score=min_binding_score,
+        only_de=only_de,
+        de_lfc=de_lfc,
+        de_pval=de_pval,
+        max_targets=max_targets,
+        pathway_genes=pathway_genes,
+        cascade_enabled=cascade_enabled,
+        max_secondary_tfs=max_secondary_tfs,
+    )
+
+    if len(primary_targets) == 0:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # Create Layer 1 edges and nodes
+    for _, row in primary_targets.iterrows():
+        gene = row['gene']
+        gene_upper = gene.upper()
+
+        # Determine if this gene is a TF
+        is_tf = gene_upper in tf_list and gene_upper != primary_tf.upper()
+
+        # Edge
+        all_edges.append({
+            'source': primary_tf,
+            'target': gene,
+            'binding_score': row['binding_score'],
+            'accessibility_diff': row['accessibility_score'],
+            'n_sites': row.get('n_sites', 1),
+            'layer': 1,
+            'source_type': 'TF',
+            'target_type': 'TF' if is_tf else 'gene'
+        })
+
+        # Node
+        if gene not in all_nodes:
+            all_nodes[gene] = {
+                'node': gene,
+                'node_type': 'TF' if is_tf else 'gene',
+                'layer': 1,
+                'expression': row['rna_log2fc'],
+                'expression_pval': row.get('rna_pvalue', 1.0),
+                'is_primary': False
+            }
+
+    # --- Layer 2: Secondary TF targets ---
+    if cascade_enabled and secondary_tfs:
+        _expand_cascade_layer(
+            secondary_tfs, primary_tf, tf_list, peak2gene, rna_de, bindetect_dir,
+            all_edges, all_nodes,
+            case_conditions=case_conditions,
+            control_conditions=control_conditions,
+            accessibility_mode=accessibility_mode,
+            use_bound_only=use_bound_only,
+            min_binding_score=min_binding_score,
+            only_de=only_de,
+            de_lfc=de_lfc,
+            de_pval=de_pval,
+            max_secondary_tfs=max_secondary_tfs,
+            max_targets_per_secondary=max_targets_per_secondary,
+            pathway_genes=pathway_genes,
+        )
+
+    # --- Assemble final DataFrames ---
+    return _assemble_cascade_network(all_edges, all_nodes)
 
 
 def main() -> None:
