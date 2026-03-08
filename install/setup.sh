@@ -39,6 +39,12 @@ fi
 PYTHON_VERSION=$(python3 --version 2>&1)
 echo -e "${GREEN}  Found: $PYTHON_VERSION${NC}"
 
+# Verify minimum Python version (3.8+)
+python3 -c "import sys; assert sys.version_info >= (3, 8), f'Python 3.8+ required, found {sys.version}'" 2>/dev/null || {
+    echo -e "${RED}ERROR: Python 3.8+ is required. Found: $PYTHON_VERSION${NC}"
+    exit 1
+}
+
 # Check R
 echo ""
 echo "Checking R installation..."
@@ -48,6 +54,12 @@ if ! command -v Rscript &> /dev/null; then
 fi
 R_VERSION=$(Rscript --version 2>&1 | head -1)
 echo -e "${GREEN}  Found: $R_VERSION${NC}"
+
+# Verify minimum R version (4.0+)
+Rscript -e "if (getRversion() < '4.0') { cat('ERROR: R 4.0+ required\n'); quit(status=1) }" 2>/dev/null || {
+    echo -e "${RED}ERROR: R 4.0+ is required. Found: $R_VERSION${NC}"
+    exit 1
+}
 
 # Check for external tools (TOBIAS, HOMER)
 echo ""

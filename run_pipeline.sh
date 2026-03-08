@@ -255,16 +255,17 @@ cfg = yaml.safe_load(open(sys.argv[1]))
 print(cfg.get('tf_focus', {}).get('contrast_label', 'Contrast'))
 " "$CONFIG")
 
-    for TF_NAME in $TF_NAMES; do
+    for TF_NAME in $TF_NAMES; do  # Word-splitting intentional: one TF per line from Python
         if [ -z "$TF_NAME" ]; then
             continue
         fi
 
         # Find the edges file for this TF
         EDGES_PATTERN="$TF_FOCUS_DIR/tables/tf_focus_edges_${TF_NAME}_*.tsv"
-        EDGES_FILE=$(ls $EDGES_PATTERN 2>/dev/null | head -1)
+        files=($EDGES_PATTERN)
+        EDGES_FILE="${files[0]}"
 
-        if [ -z "$EDGES_FILE" ] || [ ! -f "$EDGES_FILE" ]; then
+        if [ -z "${EDGES_FILE}" ] || [ ! -f "${EDGES_FILE}" ]; then
             print_warning "No edges file found for $TF_NAME"
             continue
         fi
@@ -325,11 +326,14 @@ main() {
                 RUN_TF_FOCUS=true
                 shift
                 ;;
-            all|NvT|CvNC|*)
-                if [[ "$1" != --* ]]; then
-                    CONTRAST="$1"
-                fi
+            all|NvT|CvNC)
+                CONTRAST="$1"
                 shift
+                ;;
+            *)
+                print_error "Unknown argument: $1"
+                show_help
+                exit 1
                 ;;
         esac
     done

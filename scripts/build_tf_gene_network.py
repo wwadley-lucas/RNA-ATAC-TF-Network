@@ -16,6 +16,7 @@ Usage:
 __version__ = "1.0.0"
 
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -26,19 +27,11 @@ import yaml
 from scipy import stats
 from statsmodels.stats.multitest import multipletests
 
-
-def load_config(config_path: str) -> dict:
-    """Load YAML configuration file."""
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+logger = logging.getLogger(__name__)
 
 
-def resolve_path(path: str, base_dir: Path) -> Path:
-    """Resolve relative paths from config file location."""
-    p = Path(path)
-    if p.is_absolute():
-        return p
-    return (base_dir / p).resolve()
+sys.path.insert(0, str(Path(__file__).parent))
+from utils import load_config, resolve_path  # noqa: E402 — shared pipeline utilities
 
 
 def load_bindetect_results(path: Path) -> pd.DataFrame:
@@ -137,7 +130,14 @@ def create_peak2gene_mapping(peak_annot: pd.DataFrame, cfg: dict) -> pd.DataFram
     max_dist = p2g_cfg.get('max_distance', 100000)
     mapping = mapping[mapping['dist_to_tss'].abs() <= max_dist].copy()
 
-    # Calculate distance weight (exponential decay)
+    # Calculate distance weight using exponential decay: w = exp(-d / decay).
+    # The decay_distance (default 50 kb) is the half-distance at which weight
+    # drops to ~37% (1/e).  This follows the empirical observation that
+    # enhancer-promoter contact frequency decays roughly exponentially with
+    # genomic distance (Javierre et al. 2016, Cell; Gasperini et al. 2019,
+    # Nature).  Alternatives include power-law decay (Hi-C-derived; Lieberman-
+    # Aiden et al. 2009) or activity-by-contact models (Fulco et al. 2019,
+    # Nature Genetics) which additionally weight by enhancer signal.
     decay = p2g_cfg.get('decay_distance', 50000)
     mapping['weight'] = np.exp(-mapping['dist_to_tss'].abs() / decay)
 
@@ -186,19 +186,27 @@ def compute_tf_activity(bindetect: pd.DataFrame, contrast_cfg: dict, scoring_cfg
 
     contrast_name = contrast_cfg.get('name', '')
 
-    # Define group mappings based on contrast
-    if 'Normal' in contrast_name or 'Transformed' in contrast_name or contrast_name == 'Normal_vs_Transformed':
+    # Define group mappings based on contrast.
+    # Prefer explicit config keys (atac_groups.case / atac_groups.control) over
+    # hardcoded defaults so that new contrasts work without code changes.
+    atac_groups = contrast_cfg.get('atac_groups', {})
+
+    if atac_groups.get('case') and atac_groups.get('control'):
+        case_groups = list(atac_groups['case'])
+        ctrl_groups = list(atac_groups['control'])
+        print(f"  Using contrast groups from config: case={case_groups}, ctrl={ctrl_groups}")
+
+    elif 'Normal' in contrast_name or 'Transformed' in contrast_name or contrast_name == 'Normal_vs_Transformed':
         # NvT: Transformed (JAK2VF samples) vs Normal (Parental, IL10R)
-        # Note: bindetect doesn't distinguish CI vs non-CI, so we use all JAK2VF as "transformed"
         case_groups = ['MPL-JAK2VF_IL10', 'MPL-JAK2VF_ctrl', 'IL10R-JAK2VF_IL10', 'IL10R-JAK2VF_ctrl']
         ctrl_groups = ['Parental_IL10', 'Parental_ctrl', 'IL10R_IL10', 'IL10R_ctrl']
-        print("  Using NvT contrast: JAK2VF samples vs Parental/IL10R")
+        print("  Using NvT contrast (hardcoded fallback): JAK2VF samples vs Parental/IL10R")
 
     elif 'Canonical' in contrast_name or 'NonCanonical' in contrast_name or contrast_name == 'Canonical_vs_NonCanonical':
         # CvNC: MPL-JAK2VF (non-canonical) vs IL10R-JAK2VF (canonical)
         case_groups = ['MPL-JAK2VF_IL10', 'MPL-JAK2VF_ctrl']  # non-canonical
         ctrl_groups = ['IL10R-JAK2VF_IL10', 'IL10R-JAK2VF_ctrl']  # canonical
-        print("  Using CvNC contrast: MPL-JAK2VF vs IL10R-JAK2VF")
+        print("  Using CvNC contrast (hardcoded fallback): MPL-JAK2VF vs IL10R-JAK2VF")
 
     else:
         # Fall back to using all samples
@@ -217,7 +225,8 @@ def compute_tf_activity(bindetect: pd.DataFrame, contrast_cfg: dict, scoring_cfg
         print("  WARNING: No valid groups found, using all TFs with mean activity")
         tf_activity = bindetect[['name']].copy()
         tf_activity['tf_activity'] = bindetect[score_cols].mean(axis=1)
-        tf_activity['tf_pvalue'] = 0.01
+        tf_activity['tf_pvalue'] = np.nan
+        logger.warning("No valid groups found for contrast; tf_pvalue set to NaN for all TFs")
         tf_activity['direction'] = 1
         tf_activity = tf_activity.rename(columns={'name': 'tf'})
         return tf_activity
@@ -253,7 +262,8 @@ def compute_tf_activity(bindetect: pd.DataFrame, contrast_cfg: dict, scoring_cfg
         if pvalue_cols:
             tf_activity['tf_pvalue'] = bindetect[pvalue_cols].min(axis=1)
         else:
-            tf_activity['tf_pvalue'] = 0.01
+            tf_activity['tf_pvalue'] = np.nan
+            logger.warning("No pvalue columns found in pairwise comparisons; tf_pvalue set to NaN")
     else:
         # Compute from mean scores
         print("  No direct comparisons, computing from mean scores...")
@@ -293,13 +303,15 @@ def compute_tf_activity(bindetect: pd.DataFrame, contrast_cfg: dict, scoring_cfg
             tf_activity['case_mean'] = bindetect[case_score_cols].mean(axis=1)
             tf_activity['ctrl_mean'] = bindetect[ctrl_score_cols].mean(axis=1)
             tf_activity['tf_activity'] = tf_activity['case_mean'] - tf_activity['ctrl_mean']
-            tf_activity['tf_pvalue'] = 0.01
+            tf_activity['tf_pvalue'] = np.nan
+            logger.warning("tf_pvalue computed from mean scores without statistical test; set to NaN")
         else:
             print("  ERROR: Could not find score columns")
             # Last resort: use all mean scores
             tf_activity = bindetect[['name']].copy()
             tf_activity['tf_activity'] = bindetect[score_cols].std(axis=1)  # use variance as activity proxy
-            tf_activity['tf_pvalue'] = 0.01
+            tf_activity['tf_pvalue'] = np.nan
+            logger.warning("Last-resort TF activity from score variance; tf_pvalue set to NaN")
 
     tf_activity['direction'] = np.sign(tf_activity['tf_activity'])
     tf_activity = tf_activity.rename(columns={'name': 'tf'})
@@ -508,28 +520,20 @@ def compute_rna_de(rna_counts: pd.DataFrame, metadata: pd.DataFrame,
     ctrl_mean = ctrl_data.mean(axis=1)
     log2fc = case_mean - ctrl_mean  # difference of log2-CPM means
 
-    # Welch's t-test on log2-CPM values
-    pvalues = []
-    n_failed = 0
-    genes = rna_counts.index
-    for gene in genes:
-        case_vals = case_data.loc[gene].values
-        ctrl_vals = ctrl_data.loc[gene].values
+    # Welch's t-test on log2-CPM values (vectorized across genes)
+    case_matrix = case_data.values  # shape: (n_genes, n_case)
+    ctrl_matrix = ctrl_data.values  # shape: (n_genes, n_ctrl)
 
-        # Skip if all zeros in raw counts (gene not detected)
-        if rna_counts.loc[gene, case_samples].sum() == 0 and rna_counts.loc[gene, ctrl_samples].sum() == 0:
-            pvalues.append(1.0)
-            continue
+    # Mask genes with zero raw counts in both groups (not detected)
+    zero_mask = (
+        rna_counts[case_samples].sum(axis=1) == 0
+    ) & (
+        rna_counts[ctrl_samples].sum(axis=1) == 0
+    )
 
-        try:
-            _, pval = stats.ttest_ind(case_vals, ctrl_vals, equal_var=False)
-            pvalues.append(pval if not np.isnan(pval) else 1.0)
-        except (ValueError, RuntimeWarning) as e:
-            pvalues.append(1.0)  # conservative fallback for computational failures
-            n_failed += 1
-
-    if n_failed > 0:
-        print(f"Warning: {n_failed}/{len(genes)} genes failed t-test computation (set to p=1.0)")
+    _, pvalues = stats.ttest_ind(case_matrix, ctrl_matrix, axis=1, equal_var=False)
+    pvalues = np.where(np.isnan(pvalues), 1.0, pvalues)
+    pvalues[zero_mask.values] = 1.0
 
     # FDR correction (Benjamini-Hochberg)
     pvalues = np.array(pvalues)
@@ -602,8 +606,8 @@ def build_tf_gene_edges(tf_activity: pd.DataFrame, peak2gene: pd.DataFrame,
         print(f"  Trying lower threshold (|log2FC| >= {rna_lfc_min}): {len(de_genes)} genes")
 
     if len(de_genes) == 0:
-        de_genes = gene_data.head(1000).copy()  # just take top genes
-        print(f"  Using top 1000 genes as fallback")
+        de_genes = gene_data.reindex(gene_data['rna_log2fc'].abs().sort_values(ascending=False).index).head(1000).copy()
+        print(f"  Using top 1000 genes by |rna_log2fc| as fallback")
 
     # FILTER to active TFs (reduces computation)
     tf_min = scoring_cfg.get('tf_change_min', 0.01)

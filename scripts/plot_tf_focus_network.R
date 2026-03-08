@@ -53,6 +53,65 @@ DEFAULT_CONFIG <- list(
   )
 )
 
+# Theme configuration: all magic-number sizing constants in one place.
+# Each variant (full, compact, circular, circular_compact) overrides
+# specific values; unlisted keys inherit from THEME_FULL.
+THEME_FULL <- list(
+  size_l0 = 20, stroke_l0 = 2.5,
+
+  size_l1_tf = 14, stroke_l1_tf = 1.8,
+  size_l1_gene = 10, stroke_l1_gene = 1,
+  size_l2 = 5, stroke_l2 = 0.5,
+  label_l0 = 5, label_l1_tf = 3.5, label_l1_gene = 2.5, label_l2 = 2,
+  arrow_len_mm = 2.5, end_cap_r = 4,
+  edge_alpha_l1 = 0.7, edge_alpha_other = 0.4,
+  fixed_edge_width = NULL,
+  colorbar_name = "Expression\nlog2FC"
+)
+
+THEME_COMPACT <- list(
+  size_l0 = 10, stroke_l0 = 1.5,
+  size_l1_tf = 7, stroke_l1_tf = 1,
+  size_l1_gene = 5, stroke_l1_gene = 0.5,
+  size_l2 = 3, stroke_l2 = 0.3,
+  label_l0 = 2.5, label_l1_tf = 2, label_l1_gene = 1.5, label_l2 = 1.2,
+  arrow_len_mm = 1.5, end_cap_r = 2,
+  edge_alpha_l1 = 0.7, edge_alpha_other = 0.4,
+  fixed_edge_width = 0.4,
+  colorbar_name = "log2FC"
+)
+
+THEME_CIRCULAR <- list(
+  size_l0 = 22, stroke_l0 = 3,
+  size_l1_tf = 14, stroke_l1_tf = 2,
+  size_l1_gene = 10, stroke_l1_gene = 1,
+  size_l2 = 5, stroke_l2 = 0.5,
+  label_l0 = 5, label_l1_tf = 3.5, label_l1_gene = 2.5, label_l2 = 2,
+  arrow_len_mm = 2, end_cap_r = 3,
+  edge_alpha_l1 = 0.7, edge_alpha_other = 0.4,
+  fixed_edge_width = NULL,
+  colorbar_name = "Expression\nlog2FC"
+)
+
+THEME_CIRCULAR_COMPACT <- list(
+  size_l0 = 8, stroke_l0 = 1.2,
+  size_l1_tf = 5, stroke_l1_tf = 0.8,
+  size_l1_gene = 4, stroke_l1_gene = 0.4,
+  size_l2 = 2.5, stroke_l2 = 0.2,
+  label_l0 = 2, label_l1_tf = 1.5, label_l1_gene = 1.2, label_l2 = 1,
+  arrow_len_mm = 1, end_cap_r = 1.5,
+  edge_alpha_l1 = 0.6, edge_alpha_other = 0.3,
+  fixed_edge_width = 0.3,
+  colorbar_name = "log2FC"
+)
+
+get_theme_config <- function(circular, compact) {
+  if (circular && compact) return(THEME_CIRCULAR_COMPACT)
+  if (circular) return(THEME_CIRCULAR)
+  if (compact) return(THEME_COMPACT)
+  return(THEME_FULL)
+}
+
 # ==============================================================================
 # HELPER FUNCTIONS
 # ==============================================================================
@@ -321,54 +380,28 @@ plot_tf_cascade_core <- function(g, primary_tf, contrast_label = NULL,
   # --- Node summary stats ---
   ns <- build_node_summary(g)
 
-  # --- Sizing parameters (compact vs full) ---
-  if (compact) {
-    # Node sizes
-    sz_l0 <- 10; stroke_l0 <- 1.5
-    sz_l1_tf <- 7; stroke_l1_tf <- 1
-    sz_l1_gene <- 5; stroke_l1_gene <- 0.5
-    sz_l2 <- 3; stroke_l2 <- 0.3
-    # Label sizes
-    lbl_l0 <- 2.5; lbl_l1_tf <- 2; lbl_l1_gene <- 1.5; lbl_l2 <- 1.2
-    # Edge parameters
-    arrow_len <- unit(1.5, "mm"); end_cap_r <- 2
-    edge_alpha_l1 <- 0.7; edge_alpha_other <- 0.4
-    fixed_edge_width <- 0.4  # compact uses fixed width
-    # Colorbar
-    colorbar_guide <- guide_colorbar(barwidth = 0.5, barheight = 3)
-    colorbar_name <- "log2FC"
-  } else {
-    sz_l0 <- 20; stroke_l0 <- 2.5
-    sz_l1_tf <- 14; stroke_l1_tf <- 1.8
-    sz_l1_gene <- 10; stroke_l1_gene <- 1
-    sz_l2 <- 5; stroke_l2 <- 0.5
-    lbl_l0 <- 5; lbl_l1_tf <- 3.5; lbl_l1_gene <- 2.5; lbl_l2 <- 2
-    arrow_len <- unit(2.5, "mm"); end_cap_r <- 4
-    edge_alpha_l1 <- 0.7; edge_alpha_other <- 0.4
-    fixed_edge_width <- NULL  # full uses accessibility-scaled width
-    colorbar_guide <- guide_colorbar(order = 1)
-    colorbar_name <- "Expression\nlog2FC"
-  }
+  # --- Sizing parameters from theme config ---
+  tc <- get_theme_config(circular, compact)
+  sz_l0 <- tc$size_l0; stroke_l0 <- tc$stroke_l0
+  sz_l1_tf <- tc$size_l1_tf; stroke_l1_tf <- tc$stroke_l1_tf
+  sz_l1_gene <- tc$size_l1_gene; stroke_l1_gene <- tc$stroke_l1_gene
+  sz_l2 <- tc$size_l2; stroke_l2 <- tc$stroke_l2
+  lbl_l0 <- tc$label_l0; lbl_l1_tf <- tc$label_l1_tf
+  lbl_l1_gene <- tc$label_l1_gene; lbl_l2 <- tc$label_l2
+  arrow_len <- unit(tc$arrow_len_mm, "mm"); end_cap_r <- tc$end_cap_r
+  edge_alpha_l1 <- tc$edge_alpha_l1; edge_alpha_other <- tc$edge_alpha_other
+  fixed_edge_width <- tc$fixed_edge_width
+  colorbar_name <- tc$colorbar_name
 
-  # Circular variants use slightly different sizes
-  if (circular && !compact) {
-    sz_l0 <- 22; stroke_l0 <- 3
-    sz_l1_tf <- 14; stroke_l1_tf <- 2
-    sz_l1_gene <- 10; stroke_l1_gene <- 1
-    sz_l2 <- 5; stroke_l2 <- 0.5
-    arrow_len <- unit(2, "mm"); end_cap_r <- 3
-    colorbar_guide <- guide_colorbar()
-    colorbar_name <- "Expression\nlog2FC"
-  } else if (circular && compact) {
-    sz_l0 <- 8; stroke_l0 <- 1.2
-    sz_l1_tf <- 5; stroke_l1_tf <- 0.8
-    sz_l1_gene <- 4; stroke_l1_gene <- 0.4
-    sz_l2 <- 2.5; stroke_l2 <- 0.2
-    lbl_l0 <- 2; lbl_l1_tf <- 1.5; lbl_l1_gene <- 1.2; lbl_l2 <- 1
-    arrow_len <- unit(1, "mm"); end_cap_r <- 1.5
-    edge_alpha_l1 <- 0.6; edge_alpha_other <- 0.3
-    fixed_edge_width <- 0.3
+  # Colorbar guide varies by variant
+  if (compact && circular) {
     colorbar_guide <- guide_colorbar(barwidth = 0.4, barheight = 2.5)
+  } else if (compact) {
+    colorbar_guide <- guide_colorbar(barwidth = 0.5, barheight = 3)
+  } else if (circular) {
+    colorbar_guide <- guide_colorbar()
+  } else {
+    colorbar_guide <- guide_colorbar(order = 1)
   }
 
   # --- Layout ---

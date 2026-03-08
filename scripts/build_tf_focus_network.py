@@ -32,18 +32,8 @@ import pandas as pd
 import yaml
 
 
-def load_config(config_path: str) -> dict:
-    """Load YAML configuration file."""
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
-
-
-def resolve_path(path: str, base_dir: Path) -> Path:
-    """Resolve relative paths from config file location."""
-    p = Path(path)
-    if p.is_absolute():
-        return p
-    return (base_dir / p).resolve()
+sys.path.insert(0, str(Path(__file__).parent))
+from utils import load_config, resolve_path  # noqa: E402 — shared pipeline utilities
 
 
 def load_pathway_genes(pathway_name: str, species: str = "Mus musculus", cache_dir: Optional[Path] = None) -> Set[str]:
@@ -145,30 +135,34 @@ def get_tf_list(bindetect_dir: Path) -> Dict[str, str]:
     return tf_list
 
 
-def get_condition_column_indices() -> Dict[str, int]:
+# Default condition-to-column-index mapping for BED file accessibility
+# columns (BED columns 10-17, 0-indexed: 9-16).  Override via the
+# config key tf_focus.condition_column_indices to support datasets with
+# different condition orderings without modifying code.
+_DEFAULT_CONDITION_INDICES: Dict[str, int] = {
+    "Parental_ctrl": 0,
+    "Parental_IL10": 1,
+    "IL10R_ctrl": 2,
+    "IL10R_IL10": 3,
+    "IL10R-JAK2VF_ctrl": 4,
+    "IL10R-JAK2VF_IL10": 5,
+    "MPL-JAK2VF_ctrl": 6,
+    "MPL-JAK2VF_IL10": 7,
+}
+
+
+def get_condition_column_indices(config: Optional[dict] = None) -> Dict[str, int]:
     """
     Map condition names to BED file column indices.
 
-    BED columns 10-17 (0-indexed: 9-16) contain accessibility values for:
-    0: Parental_ctrl
-    1: Parental_IL10
-    2: IL10R_ctrl
-    3: IL10R_IL10
-    4: IL10R-JAK2VF_ctrl
-    5: IL10R-JAK2VF_IL10
-    6: MPL-JAK2VF_ctrl
-    7: MPL-JAK2VF_IL10
+    If config['tf_focus']['condition_column_indices'] is set, uses that
+    mapping; otherwise falls back to the hardcoded defaults above.
     """
-    return {
-        "Parental_ctrl": 0,
-        "Parental_IL10": 1,
-        "IL10R_ctrl": 2,
-        "IL10R_IL10": 3,
-        "IL10R-JAK2VF_ctrl": 4,
-        "IL10R-JAK2VF_IL10": 5,
-        "MPL-JAK2VF_ctrl": 6,
-        "MPL-JAK2VF_IL10": 7,
-    }
+    if config is not None:
+        custom = config.get('tf_focus', {}).get('condition_column_indices', None)
+        if custom is not None:
+            return {str(k): int(v) for k, v in custom.items()}
+    return dict(_DEFAULT_CONDITION_INDICES)
 
 
 def load_tf_bed_file(
@@ -188,7 +182,13 @@ def load_tf_bed_file(
         bindetect_dir: Path to BINDetect output directory
         use_bound_only: If True, only load bound sites for case conditions
         case_conditions: List of condition names to consider as "bound"
-        min_binding_score: Minimum motif binding score (column 5)
+        min_binding_score: Minimum motif binding score (column 5).
+            Default 5.0 corresponds to the TOBIAS footprint score threshold
+            that empirically separates bound from unbound sites in BINDetect
+            output. Lower values (e.g. 3.0) increase sensitivity at the cost
+            of more false-positive binding calls; higher values (e.g. 8.0)
+            are more stringent. See TOBIAS documentation and Bentsen et al.
+            2020 (Nature Communications) for score interpretation.
 
     Returns:
         DataFrame with columns:
@@ -832,7 +832,7 @@ def main():
     print("="*60)
 
     # Get BINDetect directory
-    bindetect_dir = Path(tf_cfg.get('bindetect_bed_dir', ''))
+    bindetect_dir = resolve_path(tf_cfg.get('bindetect_bed_dir', ''), base_dir)
     if not bindetect_dir.exists():
         print(f"ERROR: BINDetect directory not found: {bindetect_dir}")
         sys.exit(1)
@@ -872,6 +872,7 @@ def main():
 
         if rna_counts_path.exists() and metadata_path.exists():
             # Import from main pipeline
+            sys.path.insert(0, str(Path(__file__).parent))
             from build_tf_gene_network import load_rna_counts, load_metadata, compute_rna_de
             rna_counts = load_rna_counts(rna_counts_path)
             metadata = load_metadata(metadata_path)
