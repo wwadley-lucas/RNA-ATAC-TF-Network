@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 import yaml
 from scipy import stats
+from statsmodels.stats.multitest import multipletests
 
 
 def load_config(config_path: str) -> dict:
@@ -377,14 +378,61 @@ def compute_gene_accessibility(atac_counts: pd.DataFrame, metadata: pd.DataFrame
 
 
 def compute_rna_de(rna_counts: pd.DataFrame, metadata: pd.DataFrame,
-                   contrast_cfg: dict, scoring_cfg: dict) -> pd.DataFrame:
+                   contrast_cfg: dict, scoring_cfg: dict,
+                   config: dict = None, base_dir: Path = None) -> pd.DataFrame:
     """
     Compute RNA differential expression for a given contrast.
-    Uses a simple fold-change approach (DESeq2 would be better for production).
+
+    If config['rna']['precomputed_de_path'] is set, loads pre-computed DE
+    results (e.g., from DESeq2/edgeR) instead of running a t-test.
+    Otherwise, computes log2-CPM normalized values and runs Welch's t-test
+    with BH-FDR correction.
 
     Returns DataFrame with columns: gene, rna_log2fc, rna_pvalue
     """
     print("\nComputing RNA differential expression...")
+
+    # ------------------------------------------------------------------
+    # Option A: Use pre-computed DE results (preferred over t-test)
+    # Accepts a CSV with columns [gene, log2FoldChange, padj]
+    # e.g., from DESeq2 or edgeR output
+    # Set config key: rna.precomputed_de_path
+    # ------------------------------------------------------------------
+    precomputed_de = None
+    if config is not None:
+        precomputed_de = config.get('rna', {}).get('precomputed_de_path', None)
+
+    if precomputed_de:
+        de_path = resolve_path(precomputed_de, base_dir) if base_dir else Path(precomputed_de)
+        print(f"  Loading pre-computed DE results from {de_path}")
+        de_df = pd.read_csv(de_path)
+        # Standardize column names
+        col_map = {}
+        for col in de_df.columns:
+            cl = col.lower()
+            if cl in ('gene', 'gene_name', 'geneid', 'gene_id'):
+                col_map[col] = 'gene'
+            elif cl in ('log2foldchange', 'log2fc', 'logfc', 'rna_log2fc'):
+                col_map[col] = 'rna_log2fc'
+            elif cl in ('padj', 'fdr', 'adj_pvalue', 'p_adj', 'rna_pvalue'):
+                col_map[col] = 'rna_pvalue'
+        de_df = de_df.rename(columns=col_map)
+        required = {'gene', 'rna_log2fc', 'rna_pvalue'}
+        if not required.issubset(de_df.columns):
+            missing = required - set(de_df.columns)
+            print(f"  ERROR: Pre-computed DE file missing columns: {missing}")
+            print(f"  Expected columns: gene, log2FoldChange, padj")
+            print(f"  Falling back to t-test...")
+        else:
+            de_df = de_df[['gene', 'rna_log2fc', 'rna_pvalue']].copy()
+            de_df = de_df.dropna(subset=['rna_log2fc', 'rna_pvalue'])
+            lfc_min = scoring_cfg.get('rna_log2fc_min', 0.5)
+            pval_max = scoring_cfg.get('rna_padj_max', 0.05)
+            sig_up = (de_df['rna_log2fc'] >= lfc_min) & (de_df['rna_pvalue'] <= pval_max)
+            sig_down = (de_df['rna_log2fc'] <= -lfc_min) & (de_df['rna_pvalue'] <= pval_max)
+            print(f"  Loaded {len(de_df)} genes from pre-computed DE")
+            print(f"  Significant genes: {sig_up.sum()} up, {sig_down.sum()} down")
+            return de_df
 
     rna_filter = contrast_cfg.get('rna_filter', {})
 
@@ -437,15 +485,30 @@ def compute_rna_de(rna_counts: pd.DataFrame, metadata: pd.DataFrame,
         print("  Warning: Could not find samples for contrast")
         return pd.DataFrame({'gene': rna_counts.index, 'rna_log2fc': 0.0, 'rna_pvalue': 1.0})
 
-    # Compute log2FC and simple t-test p-value
-    case_data = rna_counts[case_samples]
-    ctrl_data = rna_counts[ctrl_samples]
+    # ------------------------------------------------------------------
+    # WARNING: This t-test approach is a simplified alternative to proper
+    # differential expression analysis (DESeq2/edgeR). Results should be
+    # validated against DESeq2 output when available. To use pre-computed
+    # DE results instead, provide a CSV with columns [gene, log2FoldChange, padj]
+    # via the config key: rna.precomputed_de_path
+    # ------------------------------------------------------------------
 
-    case_mean = case_data.mean(axis=1) + 1  # pseudocount
-    ctrl_mean = ctrl_data.mean(axis=1) + 1
-    log2fc = np.log2(case_mean / ctrl_mean)
+    # Normalize raw counts to log2-CPM before statistical testing
+    # Raw counts are inappropriate for t-tests due to library size effects
+    # and non-normal distribution (negative binomial)
+    lib_sizes = rna_counts.sum(axis=0)
+    cpm = rna_counts.div(lib_sizes, axis=1) * 1e6
+    log2_cpm = np.log2(cpm + 1)
 
-    # Simple t-test (for a proper analysis, use DESeq2)
+    case_data = log2_cpm[case_samples]
+    ctrl_data = log2_cpm[ctrl_samples]
+
+    # Compute log2FC from normalized values
+    case_mean = case_data.mean(axis=1)
+    ctrl_mean = ctrl_data.mean(axis=1)
+    log2fc = case_mean - ctrl_mean  # difference of log2-CPM means
+
+    # Welch's t-test on log2-CPM values
     pvalues = []
     n_failed = 0
     genes = rna_counts.index
@@ -453,8 +516,8 @@ def compute_rna_de(rna_counts: pd.DataFrame, metadata: pd.DataFrame,
         case_vals = case_data.loc[gene].values
         ctrl_vals = ctrl_data.loc[gene].values
 
-        # Skip if all zeros
-        if case_vals.sum() == 0 and ctrl_vals.sum() == 0:
+        # Skip if all zeros in raw counts (gene not detected)
+        if rna_counts.loc[gene, case_samples].sum() == 0 and rna_counts.loc[gene, ctrl_samples].sum() == 0:
             pvalues.append(1.0)
             continue
 
@@ -468,10 +531,14 @@ def compute_rna_de(rna_counts: pd.DataFrame, metadata: pd.DataFrame,
     if n_failed > 0:
         print(f"Warning: {n_failed}/{len(genes)} genes failed t-test computation (set to p=1.0)")
 
+    # FDR correction (Benjamini-Hochberg)
+    pvalues = np.array(pvalues)
+    _, padj, _, _ = multipletests(pvalues, method='fdr_bh')
+
     result = pd.DataFrame({
         'gene': rna_counts.index,
         'rna_log2fc': log2fc.values,
-        'rna_pvalue': pvalues
+        'rna_pvalue': padj  # BH-adjusted p-values
     })
 
     # Apply thresholds
@@ -481,7 +548,7 @@ def compute_rna_de(rna_counts: pd.DataFrame, metadata: pd.DataFrame,
     sig_up = (result['rna_log2fc'] >= lfc_min) & (result['rna_pvalue'] <= pval_max)
     sig_down = (result['rna_log2fc'] <= -lfc_min) & (result['rna_pvalue'] <= pval_max)
 
-    print(f"  Significant genes: {sig_up.sum()} up, {sig_down.sum()} down")
+    print(f"  Significant genes (FDR < {pval_max}): {sig_up.sum()} up, {sig_down.sum()} down")
 
     return result
 
@@ -722,7 +789,8 @@ def main():
     gene_access = compute_gene_accessibility(atac_counts, metadata, contrast_cfg, cfg['scoring'])
 
     # Compute RNA DE
-    rna_de = compute_rna_de(rna_counts, metadata, contrast_cfg, cfg['scoring'])
+    rna_de = compute_rna_de(rna_counts, metadata, contrast_cfg, cfg['scoring'],
+                            config=cfg, base_dir=base_dir)
 
     # Build edges
     edges = build_tf_gene_edges(tf_activity, peak2gene, gene_access, rna_de, cfg)
