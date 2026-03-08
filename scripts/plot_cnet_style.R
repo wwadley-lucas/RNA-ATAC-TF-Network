@@ -321,7 +321,7 @@ plot_tf_pathway_heatmap <- function(edges, nodes, gene_sets,
 
   # Create heatmap
   p <- ggplot(mat_df, aes(x = TF, y = Pathway_clean, fill = n_genes)) +
-    geom_tile(color = "white", size = 0.5) +
+    geom_tile(color = "white", linewidth = 0.5) +
     scale_fill_gradient(
       low = "white", high = "#B2182B",
       name = "Regulated\nGenes"

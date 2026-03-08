@@ -36,58 +36,58 @@ from utils import load_config, resolve_path  # noqa: E402 — shared pipeline ut
 
 def load_bindetect_results(path: Path) -> pd.DataFrame:
     """Load TOBIAS BINDetect results with TF-level differential binding."""
-    print(f"  Loading BINDetect results from {path.name}...")
+    logger.info("Loading BINDetect results from %s...", path.name)
     df = pd.read_csv(path, sep='\t')
     # Clean up column names (remove quotes)
     df.columns = [c.strip('"') for c in df.columns]
-    print(f"    Loaded {len(df)} TFs with {len(df.columns)} columns")
+    logger.info("  Loaded %d TFs with %d columns", len(df), len(df.columns))
     return df
 
 
 def load_tf_binding_matrix(path: Path) -> pd.DataFrame:
     """Load TF binding count matrix (TF x samples)."""
-    print(f"  Loading TF binding matrix from {path.name}...")
+    logger.info("Loading TF binding matrix from %s...", path.name)
     df = pd.read_csv(path, index_col=0)
     # Clean TF names (remove C_ prefix if present)
     df.index = [tf.replace('C_', '') if tf.startswith('C_') else tf for tf in df.index]
-    print(f"    Loaded {len(df)} TFs x {len(df.columns)} samples")
+    logger.info("  Loaded %d TFs x %d samples", len(df), len(df.columns))
     return df
 
 
 def load_peak_annotations(path: Path) -> pd.DataFrame:
     """Load peak annotations with gene mapping."""
-    print(f"  Loading peak annotations from {path.name}...")
+    logger.info("Loading peak annotations from %s...", path.name)
     df = pd.read_csv(path, sep='\t')
     # Create peak_id from coordinates
     df['peak_id'] = df['seqnames'].astype(str) + ':' + df['start'].astype(str) + '-' + df['end'].astype(str)
-    print(f"    Loaded {len(df)} peak annotations")
+    logger.info("  Loaded %d peak annotations", len(df))
     return df
 
 
 def load_atac_gene_counts(path: Path) -> pd.DataFrame:
     """Load gene-level ATAC accessibility counts."""
-    print(f"  Loading ATAC gene counts from {path.name}...")
+    logger.info("Loading ATAC gene counts from %s...", path.name)
     df = pd.read_csv(path, sep='\t', index_col=0)
-    print(f"    Loaded {len(df)} genes x {len(df.columns)} samples")
+    logger.info("  Loaded %d genes x %d samples", len(df), len(df.columns))
     return df
 
 
 def load_rna_counts(path: Path) -> pd.DataFrame:
     """Load RNA expression count matrix."""
-    print(f"  Loading RNA counts from {path.name}...")
+    logger.info("Loading RNA counts from %s...", path.name)
     df = pd.read_csv(path, index_col=0)
     # Drop Description column if present
     if 'Description' in df.columns:
         df = df.drop(columns=['Description'])
-    print(f"    Loaded {len(df)} genes x {len(df.columns)} samples")
+    logger.info("  Loaded %d genes x %d samples", len(df), len(df.columns))
     return df
 
 
 def load_metadata(path: Path) -> pd.DataFrame:
     """Load sample metadata."""
-    print(f"  Loading metadata from {path.name}...")
+    logger.info("Loading metadata from %s...", path.name)
     df = pd.read_csv(path)
-    print(f"    Loaded {len(df)} samples")
+    logger.info("  Loaded %d samples", len(df))
     return df
 
 
@@ -121,6 +121,10 @@ def create_peak2gene_mapping(peak_annot: pd.DataFrame, cfg: dict) -> pd.DataFram
 
         if p2g_cfg.get('include_distal', True):
             annotation_masks.append(mapping['annotation'].str.contains('Distal|Intergenic', case=False, na=False))
+
+        if not annotation_masks:
+            logger.warning("No annotation masks configured; returning empty mapping")
+            return pd.DataFrame(columns=['peak_id', 'gene', 'dist_to_tss', 'weight', 'annotation'])
 
         keep_mask = pd.concat(annotation_masks, axis=1).any(axis=1)
 
@@ -358,8 +362,12 @@ def compute_gene_accessibility(atac_counts: pd.DataFrame, metadata: pd.DataFrame
     case_val = rna_filter.get('case', 'Transformed')
     ctrl_val = rna_filter.get('control', 'Normal')
 
-    # Map ATAC sample patterns to conditions
-    # CI samples = Transformed, non-CI = Normal
+    # Map ATAC sample patterns to conditions via string matching.
+    # ASSUMPTION: Samples containing "CI" in their name are Transformed
+    # (JAK2VF / cancer-initiating), all others are Normal.  This is fragile
+    # and depends on the naming convention from this specific experiment.
+    # TODO: Replace with metadata-driven grouping using the YAML config's
+    # contrast.atac_groups.case / .control keys (as done for TF activity).
     for s in atac_samples:
         if 'CI' in s.upper():
             case_samples.append(s)
@@ -733,7 +741,13 @@ def build_nodes_table(edges: pd.DataFrame, tf_activity: pd.DataFrame,
     return nodes
 
 
-def main():
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%H:%M:%S',
+    )
+
     parser = argparse.ArgumentParser(description='Build TF-Gene Regulatory Network')
     parser.add_argument('--config', type=str, default='./config/config.yaml', help='Config file path')
     parser.add_argument('--contrast', type=str, required=True, help='Contrast name (e.g., NvT, CvNC)')

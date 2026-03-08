@@ -21,7 +21,9 @@ Output:
 __version__ = "1.0.0"
 
 import argparse
+import logging
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +33,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+logger = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).parent))
 from utils import load_config, resolve_path  # noqa: E402 — shared pipeline utilities
@@ -57,6 +60,15 @@ def load_pathway_genes(pathway_name: str, species: str = "Mus musculus", cache_d
                 genes = set(line.strip() for line in f if line.strip())
             print(f"    Loaded {len(genes)} genes from {pathway_name}")
             return genes
+
+    # Validate inputs before interpolating into R code to prevent injection
+    _safe_pattern = re.compile(r'^[A-Za-z0-9_ .-]+$')
+    if not _safe_pattern.match(pathway_name):
+        logger.warning("Unsafe pathway_name rejected: %s", pathway_name)
+        return set()
+    if not _safe_pattern.match(species):
+        logger.warning("Unsafe species name rejected: %s", species)
+        return set()
 
     # Use R to fetch pathway genes via msigdbr
     r_code = f'''
@@ -122,14 +134,25 @@ def get_tf_list(bindetect_dir: Path) -> Dict[str, str]:
     for folder in bindetect_dir.iterdir():
         if folder.is_dir() and '_' in folder.name:
             # Parse folder name: TFname_MotifID (e.g., STAT1_MA0137.4)
-            parts = folder.name.rsplit('_', 1)
-            if len(parts) == 2:
-                tf_name = parts[0].upper()
-                motif_id = parts[1]
-                # Handle cases like IRF1_MA0050.4 - store both original and uppercase
+            # Use regex to match JASPAR motif ID format, which handles TF names
+            # containing underscores (e.g., NKX2_5_MA0063.1)
+            motif_match = re.search(r'(MA\d+\.\d+)', folder.name)
+            if motif_match:
+                motif_id = motif_match.group(1)
+                # TF name is everything before the motif ID (minus trailing underscore)
+                tf_name_raw = folder.name[:motif_match.start()].rstrip('_')
+                tf_name = tf_name_raw.upper()
                 tf_list[tf_name] = motif_id
                 # Also store with original case
-                tf_list[parts[0]] = motif_id
+                tf_list[tf_name_raw] = motif_id
+            else:
+                # Fallback to rsplit for non-JASPAR motif IDs
+                parts = folder.name.rsplit('_', 1)
+                if len(parts) == 2:
+                    tf_name = parts[0].upper()
+                    motif_id = parts[1]
+                    tf_list[tf_name] = motif_id
+                    tf_list[parts[0]] = motif_id
 
     print(f"    Found {len(tf_list) // 2} unique TFs")
     return tf_list
@@ -270,8 +293,11 @@ def _parse_bed_file(bed_path: Path) -> pd.DataFrame:
         df = pd.read_csv(bed_path, sep='\t', header=None, names=col_names)
         df['site_id'] = df['chr'] + ':' + df['start'].astype(str) + '-' + df['end'].astype(str)
         return df
-    except Exception as e:
+    except (ValueError, pd.errors.EmptyDataError, FileNotFoundError) as e:
         print(f"    Error reading {bed_path}: {e}")
+        return pd.DataFrame()
+    except Exception as e:
+        logger.warning("Unexpected error reading %s: %s", bed_path, e)
         return pd.DataFrame()
 
 
@@ -593,7 +619,12 @@ def build_cascade_network(
         )
         primary_targets['rna_log2fc'] = primary_targets['rna_log2fc'].fillna(0)
 
-    # Rank by combined score
+    # Rank by combined score.
+    # NOTE: This multiplicative formula privileges binding_score over
+    # accessibility and expression because binding_score is unbounded (raw
+    # TOBIAS footprint score) while the other two terms are offset by +1.
+    # A high binding_score can dominate regardless of expression evidence.
+    # Consider rank-based or z-score normalization if rebalancing is needed.
     primary_targets['combined_score'] = (
         primary_targets['binding_score'] *
         (1 + primary_targets['accessibility_score'].abs()) *
@@ -802,7 +833,13 @@ def build_cascade_network(
     return edges_df, nodes_df
 
 
-def main():
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%H:%M:%S',
+    )
+
     parser = argparse.ArgumentParser(description='Build TF-Focused Regulatory Network')
     parser.add_argument('--config', type=str, default='./config/config.yaml', help='Config file path')
     parser.add_argument('--contrast', type=str, default=None, help='Contrast name (uses NvT for RNA DE if not specified)')
