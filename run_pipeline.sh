@@ -205,7 +205,7 @@ run_tf_focus() {
     print_header "Running TF-Focused Network Analysis"
 
     # Check if TF focus is enabled in config
-    TF_FOCUS_ENABLED=$(python3 -c "import yaml; cfg=yaml.safe_load(open('$CONFIG')); print(cfg.get('tf_focus', {}).get('enabled', False))")
+    TF_FOCUS_ENABLED=$(python3 -c "import yaml,sys; cfg=yaml.safe_load(open(sys.argv[1])); print(cfg.get('tf_focus', {}).get('enabled', False))" "$CONFIG")
 
     if [ "$TF_FOCUS_ENABLED" != "True" ]; then
         print_warning "TF focus mode is disabled in config.yaml"
@@ -241,19 +241,19 @@ run_tf_focus() {
 
     # Get TF names from config
     TF_NAMES=$(python3 -c "
-import yaml
-cfg = yaml.safe_load(open('$CONFIG'))
+import yaml, sys
+cfg = yaml.safe_load(open(sys.argv[1]))
 tfs = cfg.get('tf_focus', {}).get('tfs', [])
 for tf in tfs:
     print(tf.get('name', ''))
-")
+" "$CONFIG")
 
     # Get contrast label from config
     CONTRAST_LABEL=$(python3 -c "
-import yaml
-cfg = yaml.safe_load(open('$CONFIG'))
+import yaml, sys
+cfg = yaml.safe_load(open(sys.argv[1]))
 print(cfg.get('tf_focus', {}).get('contrast_label', 'Contrast'))
-")
+" "$CONFIG")
 
     for TF_NAME in $TF_NAMES; do
         if [ -z "$TF_NAME" ]; then
@@ -359,11 +359,11 @@ main() {
     if [ "$CONTRAST" == "all" ]; then
         # Get all contrasts from config
         CONTRASTS=$(python3 -c "
-import yaml
-cfg = yaml.safe_load(open('$CONFIG'))
+import yaml, sys
+cfg = yaml.safe_load(open(sys.argv[1]))
 for c in cfg.get('contrasts', {}).keys():
     print(c)
-")
+" "$CONFIG")
         for c in $CONTRASTS; do
             run_contrast "$c"
         done
