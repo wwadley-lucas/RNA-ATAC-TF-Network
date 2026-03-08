@@ -447,7 +447,9 @@ def compute_rna_de(rna_counts: pd.DataFrame, metadata: pd.DataFrame,
 
     # Simple t-test (for a proper analysis, use DESeq2)
     pvalues = []
-    for gene in rna_counts.index:
+    n_failed = 0
+    genes = rna_counts.index
+    for gene in genes:
         case_vals = case_data.loc[gene].values
         ctrl_vals = ctrl_data.loc[gene].values
 
@@ -459,8 +461,12 @@ def compute_rna_de(rna_counts: pd.DataFrame, metadata: pd.DataFrame,
         try:
             _, pval = stats.ttest_ind(case_vals, ctrl_vals, equal_var=False)
             pvalues.append(pval if not np.isnan(pval) else 1.0)
-        except:
-            pvalues.append(1.0)
+        except (ValueError, RuntimeWarning) as e:
+            pvalues.append(1.0)  # conservative fallback for computational failures
+            n_failed += 1
+
+    if n_failed > 0:
+        print(f"Warning: {n_failed}/{len(genes)} genes failed t-test computation (set to p=1.0)")
 
     result = pd.DataFrame({
         'gene': rna_counts.index,
@@ -554,8 +560,33 @@ def build_tf_gene_edges(tf_activity: pd.DataFrame, peak2gene: pd.DataFrame,
         gene_edges['tf'] = tf
         gene_edges['tf_activity'] = tf_act
 
-        # Edge score = TF activity * peak weight * (1 + |accessibility change|)
-        # This ensures we get edges even if ATAC change is small
+        # ---------------------------------------------------------------
+        # Edge Score Formula (ad-hoc multiplicative approach)
+        # ---------------------------------------------------------------
+        # edge_score = TF_activity * peak_weight * (1 + |ATAC_log2FC|)
+        #
+        # Rationale for multiplicative formula:
+        #   Each factor represents an independent line of evidence for TF→gene
+        #   regulation. Multiplication ensures that edges require support from
+        #   all three modalities — a zero in any component eliminates the edge.
+        #
+        # ATAC log2FC is clipped at 2 (i.e., 4-fold change cap):
+        #   Prevents extreme accessibility outliers from dominating the score.
+        #   Beyond ~4-fold, additional opening rarely reflects proportionally
+        #   stronger regulation and is more likely technical artifact.
+        #
+        # Additive 1 in (1 + |ATAC_log2FC|):
+        #   Ensures edges can still exist when a gene has zero accessibility
+        #   change. A TF may regulate a gene through a constitutively open
+        #   region (no differential ATAC signal). Without the +1, all such
+        #   edges would be zeroed out.
+        #
+        # NOTE: This is an ad-hoc scoring heuristic. Alternatives include:
+        #   - Rank-based: convert each component to ranks, then combine
+        #   - Z-score normalization: standardize each component, then sum/multiply
+        #   - Weighted sum: allow tunable weights per data modality
+        #   - Probabilistic: model each evidence type as a likelihood
+        # ---------------------------------------------------------------
         gene_edges['edge_score'] = (
             gene_edges['tf_activity'] *
             gene_edges['peak_weight'] *

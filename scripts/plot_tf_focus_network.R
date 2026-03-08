@@ -425,6 +425,8 @@ plot_tf_cascade_circular <- function(g, primary_tf, contrast_label = NULL,
   # Layer 1 in inner ring (radius 1)
   # Layer 2 in outer ring (radius 2)
 
+  set.seed(42)  # Reproducibility for layout computation
+
   node_data <- node_data %>%
     group_by(layer) %>%
     mutate(
@@ -765,6 +767,8 @@ plot_tf_cascade_circular_compact <- function(g, primary_tf, contrast_label = NUL
   E(g)$binding_cat <- edge_data$binding_cat
 
   # Create manual radial layout
+  set.seed(42)  # Reproducibility for layout computation
+
   node_data <- node_data %>%
     group_by(layer) %>%
     mutate(

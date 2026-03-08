@@ -159,6 +159,55 @@ See [docs/OUTPUT_FILES.md](docs/OUTPUT_FILES.md) for detailed descriptions.
 </tr>
 </table>
 
+## External Tool Dependencies
+
+This pipeline depends on upstream tools for generating input data. Version mismatches
+can cause silent data format errors. Pin to the tested versions listed below.
+
+### TOBIAS (v0.14+)
+
+- **Tested with**: TOBIAS 0.14.x and 0.16.x
+- **Required for**: TF footprinting (ATACorrect, FootprintScores, BINDetect)
+- **Expected BED output format**: BINDetect produces per-TF BED files in `BINDetect/*/beds/`
+  with columns: `chr, start, end, TFBS_name, score, strand, footprint_score, bound/unbound`
+- **Install**: `pip install tobias>=0.14` or `conda install -c bioconda tobias>=0.14`
+- **Breaking changes**: Versions prior to 0.14 use a different BINDetect output format
+  (different column ordering and naming in `bindetect_results.txt`)
+
+### HOMER (v4.11+)
+
+- **Tested with**: HOMER 4.11
+- **Required for**: Peak annotation (`annotatePeaks.pl`)
+- **Expected output**: Tab-separated file with columns including `seqnames`, `start`, `end`,
+  `geneId`, `distanceToTSS`, `annotation` (or ChIPseeker equivalent)
+- **Install**: See http://homer.ucsd.edu/homer/introduction/install.html
+- **Note**: ChIPseeker can be used as an alternative peak annotator if the output columns
+  match the expected format
+
+### Python Packages
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| pandas | >=1.5, <3.0 | Data manipulation |
+| numpy | >=1.24, <2.0 | Numerical computation |
+| scipy | >=1.10 | Statistical tests (t-test) |
+| pyyaml | >=6.0 | Configuration parsing |
+| statsmodels | >=0.14 | Statistical modeling |
+
+### R Packages
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| ggraph | >=2.1 | Network visualization |
+| igraph | >=1.5 | Graph data structures |
+| tidygraph | >=1.2 | Tidy graph manipulation |
+| ggplot2 | >=3.4 | Plotting framework |
+| dplyr | >=1.1 | Data manipulation |
+| msigdbr | >=7.5 | MSigDB gene sets (Bioconductor) |
+| argparse | >=2.2 | CLI argument parsing |
+
+See `install/requirements.txt` (Python) and `install/install_r_packages.R` (R) for full lists.
+
 ## Documentation
 
 - [INPUT_DATA_FORMAT.md](docs/INPUT_DATA_FORMAT.md) - Detailed input file specifications

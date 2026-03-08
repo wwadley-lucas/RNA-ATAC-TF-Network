@@ -367,6 +367,8 @@ demo_plot <- function() {
     MYC = c("CDK4", "CCND1", "LDHA", "PKM", "ODC1")
   )
 
+  set.seed(42)  # Reproducibility for synthetic demo data
+
   edges <- do.call(rbind, lapply(names(genes_per_tf), function(tf) {
     genes <- genes_per_tf[[tf]]
     data.frame(
@@ -386,7 +388,7 @@ demo_plot <- function() {
     data.frame(
       node = all_tfs,
       node_type = "TF",
-      tf_activity = rnorm(length(all_tfs), 0.5, 0.3),
+      tf_activity = rnorm(length(all_tfs), 0.5, 0.3),  # covered by set.seed(42) above
       expression = NA,
       stringsAsFactors = FALSE
     ),

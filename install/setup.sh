@@ -49,6 +49,38 @@ fi
 R_VERSION=$(Rscript --version 2>&1 | head -1)
 echo -e "${GREEN}  Found: $R_VERSION${NC}"
 
+# Check for external tools (TOBIAS, HOMER)
+echo ""
+echo "============================================================"
+echo "Checking external tool versions..."
+echo "============================================================"
+
+# Check TOBIAS
+if command -v TOBIAS &> /dev/null; then
+    TOBIAS_VERSION=$(TOBIAS --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+')
+    TOBIAS_MAJOR=$(echo "$TOBIAS_VERSION" | cut -d. -f1)
+    TOBIAS_MINOR=$(echo "$TOBIAS_VERSION" | cut -d. -f2)
+    if [ "$TOBIAS_MAJOR" -eq 0 ] && [ "$TOBIAS_MINOR" -lt 14 ] 2>/dev/null; then
+        echo -e "${YELLOW}WARNING: TOBIAS version $TOBIAS_VERSION detected. Version 0.14+ is required.${NC}"
+        echo -e "${YELLOW}  BINDetect output format changed in 0.14. Please upgrade: pip install tobias>=0.14${NC}"
+    else
+        echo -e "${GREEN}  Found TOBIAS $TOBIAS_VERSION (>= 0.14 required)${NC}"
+    fi
+else
+    echo -e "${YELLOW}WARNING: TOBIAS not found. Install with: pip install tobias>=0.14${NC}"
+    echo -e "${YELLOW}  TOBIAS is required for TF footprinting (ATACorrect, FootprintScores, BINDetect)${NC}"
+fi
+
+# Check HOMER
+if command -v annotatePeaks.pl &> /dev/null; then
+    HOMER_VERSION=$(annotatePeaks.pl 2>&1 | head -1 | grep -oE 'v[0-9]+\.[0-9]+' || echo "unknown")
+    echo -e "${GREEN}  Found HOMER $HOMER_VERSION (v4.11+ recommended)${NC}"
+else
+    echo -e "${YELLOW}WARNING: HOMER (annotatePeaks.pl) not found.${NC}"
+    echo -e "${YELLOW}  HOMER is required for peak annotation. Install from: http://homer.ucsd.edu/homer/introduction/install.html${NC}"
+    echo -e "${YELLOW}  Alternatively, ChIPseeker can be used if output format matches.${NC}"
+fi
+
 # Install Python packages
 echo ""
 echo "============================================================"
